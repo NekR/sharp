@@ -3,6 +3,19 @@
 
   var sharp = window.sharp || {};
 
+  sharp.runtime = {
+    render: function(tpl, data, partials) {
+      return tpl(sharp.runtime.helpers.encodeHTML, data);
+    },
+    helpers: {
+      encodeHTML: function(str) {
+        return str.replace(R_MATCH_ENTITES, function(m) {
+          return entitesMap[m] || m;
+        });
+      }
+    }
+  };
+
   sharp.compiler = {
     settings: {
       varname: '$',
@@ -13,6 +26,7 @@
 
   var OUTPUT_SIGN = 'out',
     VAR_SIGN = 'v',
+    TMP_VAR = 'tmp',
     STATEMENT = /(@BLOCK_CLOSE)?(@MAIN)(@IDENTIFIER)?/g,
     consts = {
       MAIN: /#/,
@@ -27,51 +41,75 @@
     tokens = {
       '': {
         pattern: /\{(@EXPR?)\}/,
-        open: function(wrapper, code) {
-          return wrapper.start + JSONQuery(unescape(code)) + wrapper.end;
+        open: function(compiler, code) {
+          return compiler.query(code);
         },
-        noWrap: true
+        interpolation: true,
+        hasUnsafe: true
       },
       'each': {
         pattern: /\{\s*(@EXPR?)\s+->\s+([\w_]+?)\s*,\s*?([\w_]+?)\}?/,
-        open: function(wrapper, iterate, key, value) {
-          var uid = wrapper.getUid(),
-            uvar = 'k' + (++uid),
-            itervar = 'a' + uid;
+        open: function(compiler, iterate, key, value) {
+          var uVar = compiler.getVar(),
+            iterVar = compiler.getVar(),
+            valVar = compiler.getVar();
 
-          iterate = JSONQuery(unescape(iterate));
+          iterate = compiler.query(iterate);
 
-          return "var " + itervar + "=" + iterate + ";if(" + itervar +"){for(var " +
-            uvar + " in " + itervar  + "){if(" + itervar + ".hasOwnProperty(" + uvar +
-              ")){ $." + value + "=" + itervar + "[" + uvar + "];$." + key + " = " + uvar + ";";
+          compiler.mapQuery(value, valVar)
+          compiler.mapQuery(key, uVar);
+
+          var str = "var %iterVar% = %iterate%; \
+                if (%iterVar%) {\
+                  Object.keys(%iterVar%).forEach(function(%uVar%) {\
+                    %valVar% = %iterVar%[%uVar%];";
+
+          return evalStr(str, {
+            uVar: uVar,
+            valVar: valVar,
+            iterVar: iterVar,
+            iterate: iterate
+          });
         },
         close: function() {
-          return "}}}";
+          return "});}";
         }
       },
       'for': {
-        pattern: /\{\s*(@EXPR?)\s+->\s+([\w_]+?)\s*,\s*?([\w_]+?)\}?/,
-        open: function(wrapper, iterate, value, index) {
-          var uid = wrapper.getUid(),
-            uvar = 'i' + (++uid),
-            itervar = 'a' + uid,
-            lenvar = 'l' + uid;
+        pattern: /\{\s*(@EXPR?)\s+->\s+([\w_]+?)\s*(?:,\s*?([\w_]+?))?\}/,
+        open: function(compiler, iterate, value, index) {
+          var uVar = compiler.getVar(),
+            iterVar = compiler.getVar(),
+            lenVar = compiler.getVar(),
+            valVar = compiler.getVar();
 
-          iterate = JSONQuery(unescape(iterate));
+          iterate = compiler.query(iterate);
 
-          return "var " + itervar + "=" + iterate + ";if(" + itervar +"){for(var " +
-            uvar + " = 0, " + lenvar + " = " + itervar + ".length;" + uvar + "<" + lenvar +
-            ";" + uvar + "++){if(" + itervar + ".hasOwnProperty(" + uvar +
-              ")){ $." + value + "=" + itervar + "[" + uvar + "];$." + index + " = " + uvar + ";";
+          compiler.mapQuery(value, valVar)
+          compiler.mapQuery(index, uVar);
+
+
+          var str = "var %iterVar% = %iterate%;\
+                if (%iterVar%) {\
+                  for (var %uVar% = 0, %lenVar% = %iterVar%.length; %uVar% < %lenVar%; %uVar%++) {\
+                    %valVar% = %iterVar%[%uVar%];";
+
+          return evalStr(str, {
+            uVar: uVar,
+            iterVar: iterVar,
+            lenVar: lenVar,
+            valVar: valVar,
+            iterate: iterate
+          });
         },
         close: function() {
-          return "}}}";
+          return "}}";
         }
       },
       'if': {
         pattern: /\{(@EXPR?)\}/,
-        open: function(wrapper, expr) {
-          return "if (" + JSONQuery(unescape(expr)) + ") {";
+        open: function(compiler, expr) {
+          return "if (" + compiler.query(expr) + ") {";
         },
         close: function() {
           return '}';
@@ -88,37 +126,45 @@
       },
       'elseif': {
         pattern: /\{(@EXPR?)\}/,
-        open: function(wrapper, expr) {
-          return "else if (" + JSONQuery(unescape(expr)) + ") {";
+        open: function(compiler, expr) {
+          return "else if (" + compiler.query(expr) + ") {";
         },
         close: function() {
           return '}';
         }
+      },
+      json: {
+        pattern: /\{(@EXPR?)\}/,
+        open: function(compiler, expr) {
+          return 'JSON.stringify(' + compiler.query(expr) + ')';
+        },
+        interpolation: true,
+        hasUnsafe: true
       }
     };
 
-  var engine = {
+  var stream = {
     open: function() {
       return OUTPUT_SIGN + "+='";
     },
     close: function() {
       return "';";
+    },
+    wrap: function(wrapper, data, unsafe) {
+      return evalStr(unsafe ? wrapper.unsafe : wrapper.safe, {
+        data: data,
+        tmp: TMP_VAR
+      });
     }
-  };
-
-  var wrappers = {
-    append: { 
-      unsafeStart: "'+(",
-      unsafeEnd: ")+'",
-      start: "'+encodeHTML(((tmp = ",
-      end: ") == null ? '' : tmp) + '')+'"
+  },
+  wrappers = {
+    append: {
+      safe: "' + encodeHTML(((%tmp% = %data%) == null ? '' : %tmp%) + '') + '",
+      unsafe: "' + (((%tmp% = %data%) == null ? '' : %tmp%) + '') + '"
     },
     split: {
-      safe: "';out+=encodeHTML(((tmp = %data%) == null ? '' : tmp) + '');out+='",
-      unsafeStart: "';out+=(",
-      unsafeEnd: ");out+='",
-      start: "';out+=encodeHTML(((tmp = ",
-      end: ") == null ? '' : tmp) + '');out+='"
+      safe: "'; out += encodeHTML(((%tmp% = %data%) == null ? '' : %tmp%) + ''); out += '",
+      unsafe: "'; out += (((%tmp% = %data%) == null ? '' : %tmp%) + ''); out += '"
     }
   },
   entitesMap = {
@@ -129,28 +175,18 @@
     "'": '&#39;',
     "/": '&#47;'
   },
-  slice = Array.prototype.slice;
+  slice = Array.prototype.slice,
+  hasOwn = Object.prototype.hasOwnProperty;
 
   var R_MATCH_ENTITES = /&(?!#?\w+;)|<|>|"|'|\//g,
     R_UNESCAPE_1 = /\\(['"\\])/g,
-    R_UNESCAPE_2 = /[\r\t\n]/g;
+    R_UNESCAPE_2 = /[\r\t\n]/g,
+    R_EVAL_STR = /%(\w+)%/g;
 
-  var encodeHTML = function(str) {
-    return str.replace(R_MATCH_ENTITES, function(m) {
-      return entitesMap[m] || m;
-    });
-  },
-  unescape = function(code) {
+  var unescape = function(code) {
     return code.replace(R_UNESCAPE_1, '$1').replace(R_UNESCAPE_2, ' ');
   },
   getRegStr = function(reg) {
-    /*reg += '';
-
-    var start = reg.indexOf('/') + 1,
-      end = reg.lastIndexOf('/');
-    
-    return reg.slice(start, end);*/
-
     return reg.source;
   },
   evalReg = function(reg, flags) {
@@ -167,25 +203,24 @@
     return reg;
   },
   doReplace = function(string, from, to, replace) {
-    return string.slice(0, from) + replace +
-      string.slice(to);
+    return string.slice(0, from) + replace + string.slice(to);
+  },
+  evalStr = function(str, data) {
+    return str.replace(R_EVAL_STR, function(input, key) {
+      return key.split('.').reduce(function(data, key) {
+        return data[key];
+      }, data);
+    });
   };
 
   sharp.compiler.compile = function(str) {
     var settings = sharp.compiler.settings,
       wrapper = settings.append ? wrappers.append : wrappers.split,
-      uid = 0;
+      uid = 0,
+      compiler;
 
-    wrapper = Sync.extend({
-      getUid: function() {
-        return uid++;
-      }
-    }, wrapper, engine);
-
-    str = ("var tmp; var " + OUTPUT_SIGN + "='" +
-      (settings.strip ? str.replace(/(^|\r|\n)\t* +| +\t*(\r|\n|$)/g, ' ')
-          .replace(/\r|\n|\t|\/\*[\s\S]*?\*\//g, '') : str)
-      .replace(/'|"|\\/g, '\\$&'));
+    str = (settings.strip ? str.replace(/(^|\r|\n)\t* +| +\t*(\r|\n|$)/g, ' ')
+          .replace(/\r|\n|\t|\/\*[\s\S]*?\*\//g, '') : str).replace(/'|"|\\/g, '\\$&');
 
     (function() {
       var statementReg = evalReg(STATEMENT),
@@ -201,7 +236,27 @@
         patternMatch,
         patternStart,
         patternMatchStr,
-        main;
+        main,
+        unsafe;
+
+      compiler = {
+        getVar: function() {
+          return VAR_SIGN + uid++;
+        },
+        query: JSONQuery,
+        mapQuery: function(who, by) {
+          if (token.close) {
+            //who = '$.' + who;
+
+            var prev = this.queryMap[who],
+              unmap = token.unmap || (token.unmap = []);
+            
+            unmap.push([who, prev || null]);
+            this.queryMap[who] = by;
+          }
+        },
+        queryMap: {}
+      };
 
       statementReg.lastIndex = 0;
 
@@ -213,24 +268,38 @@
         index = match.index;
         tmp = null;
 
+        if (identifier[0] === '!') {
+          unsafe = true;
+          identifier = identifier.slice(1);
+        } else {
+          unsafe = false;
+        }
+
         if (close) {
           if (token = openStack.pop()) {
             tmp = token.close();
 
             if (!token.noWrap) {
-              tmp = engine.close() + tmp +  engine.open();
+              tmp = stream.close() + tmp +  stream.open();
             }
 
-            token = tmp;
+            if (token.unmap && token.unmap.length) {
+              token.unmap.forEach(function(arr) {
+                compiler.queryMap[arr[0]] = arr[1];
+              });
 
-            str = doReplace(str, index, index + close.length + main.length, token);
-            index += token.length;
-            token = null;
+              token.unmap = null;
+            }
+
+            str = doReplace(str, index, index + close.length + main.length, tmp);
+            index += tmp.length;
+            tmp = token = null;
           } else {
             throw new SyntaxError();
           }
         }
-        if (!tokens.hasOwnProperty(identifier)) {
+
+        if (!hasOwn.call(tokens, identifier)) {
           continue;
         }
 
@@ -244,16 +313,20 @@
 
         pattern = evalReg(pattern);
         pattern.lastIndex = patternStart =
-          index + (close ? identifier.length : main.length + identifier.length);
+          index + (close ? identifier.length : main.length + identifier.length) + unsafe;
         patternMatch = pattern.exec(str);
 
         if (patternMatch && patternMatch.index === patternStart) {
           patternMatchStr = patternMatch[0];
-          tmp = [wrapper].concat(patternMatch.slice(1));
+          tmp = [compiler].concat(patternMatch.slice(1));
           tmp = token.open.apply(token, tmp);
 
           if (!token.noWrap) {
-            tmp = engine.close() + tmp + engine.open();
+            if (token.interpolation) {
+              tmp = stream.wrap(wrapper, tmp, token.hasUnsafe && unsafe);
+            } else {
+              tmp = stream.close() + tmp + stream.open();
+            }
           }
 
           str = doReplace(
@@ -265,19 +338,16 @@
       }
     }());
 
-    str += "';return " + OUTPUT_SIGN + ";";
+    str = "var " + TMP_VAR + ", " + OUTPUT_SIGN + "= '" + str + "'; return " + OUTPUT_SIGN + ";";
 
     str = str.replace(/\n/g, '\\n').replace(/\t/g, '\\t').replace(/\r/g, '\\r')
       .replace(evalReg(/(\s|;|\}|^|\{)@OUTPUT\+='';/), '$1').replace(/\+''/g, '')
       .replace(evalReg(/(\s|;|\}|^|\{)@OUTPUT\+=''\+/),'$1' + OUTPUT_SIGN + '+=');
 
-    console.log('-- fn --');
     console.log(str);
-    console.log('-- end --');
 
     try {
-      return (new Function('encodeHTML', settings.varname, str))
-       .bind(null, encodeHTML);
+      return new Function('encodeHTML', settings.varname, str);
     } catch (e) {
       if (typeof console !== 'undefined') {
         console.log("Could not create a template function: " + str);
@@ -292,7 +362,12 @@
   function JSONQuery(query, obj, args, context) {
     var depth = 0,
       strings = [],
-      executor;
+      executor,
+      compiler = this,
+      queryMap = this.queryMap;
+
+    query = unescape(query);
+
     query = query.replace(/"(\\.|[^"\\])*"|'(\\.|[^'\\])*'|[\[\]]/g, function(t) {
       depth += t === '[' ? 1 : (t === ']' ? -1 : 0); // keep track of bracket depth
 
@@ -300,18 +375,24 @@
           (t.charAt(0) === '"' || t.charAt(0) == "'") ? '`' + (strings.push(t) - 1) : t; // and replace all the strings
     });
 
-    // need to change to more savable match
-    /*query.replace(/(\]|\)|push|pop|shift|splice|sort|reverse)\s*\(/, function(){
-      throw new SyntaxError("Unsafe function call");
-    });*/
-
     query = query.replace(/([^<>=]=)([^=])/g, '$1=$2') // change the equals to comparisons except operators ==, <=, >=
 
-    query = query.replace(/(@|\.)?\s*([a-zA-Z\$_]+)(\s*:)?/g, function(str, sign, identifier) {
-      return (sign === '.' ? sign : // leave .prop alone
-        sign === '@' ? /*'_ctx.'*/ '$.' : // the reference to the current object; is unused now
-        (str.match(/:|^(\$([\da-zA-Z_]*)|Math|true|false|null)$/) ? '' : '$.')) + identifier; // plain names should be properties of root...
-        //unless they are a label in object initializer
+    query = query.replace(/(@|\.)?\s*([a-zA-Z_]+)(\s*:)?/g, function(str, sign, identifier) {
+      if (sign !== '.' && sign !== '@') {
+        if (!str.match(/:|^(\$([\da-zA-Z_]*)|Math|Date|new Date|parseInt|parseFloat|isNaN|isFinite|true|false|null)$/)) {
+          sign = '@';
+        }
+      }
+
+      if (sign === '@') {
+        if (hasOwn.call(queryMap, identifier)) {
+          return queryMap[identifier];
+        }
+
+        return '$.' + identifier;
+      }
+
+      return sign + identifier;
     });
 
     query = query.replace(/\$(\d+|[a-z_][a-z0-9_]*)/gi, function(str, arg) {
@@ -324,9 +405,5 @@
     });
 
     return query;
-
-    //executor = new Function('$', '_', '"use strict"; return (' + query + ');');
-
-    //return obj ? executor(obj, args) : executor;
   };
 }(this));
