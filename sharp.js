@@ -5,6 +5,7 @@
 
   sharp.runtime = {
     render: function(tpl, data, partials) {
+      tpl = new Function('encodeHTML', sharp.varname, tpl);
       return tpl(sharp.runtime.helpers.encodeHTML, data);
     },
     helpers: {
@@ -16,9 +17,10 @@
     }
   };
 
+  sharp.varname = '$';
+
   sharp.compiler = {
     settings: {
-      varname: '$',
       strip: true,
       append: true
     }
@@ -52,27 +54,29 @@
         open: function(compiler, iterate, key, value) {
           var uVar = compiler.getVar(),
             iterVar = compiler.getVar(),
-            valVar = compiler.getVar();
+            valVar = compiler.getVar(),
+            keysVar = compiler.getVar('Object.keys');
 
           iterate = compiler.query(iterate);
 
           compiler.mapQuery(value, valVar)
           compiler.mapQuery(key, uVar);
 
-          var str = "var %iterVar% = %iterate%; \
-                if (%iterVar%) {\
-                  Object.keys(%iterVar%).forEach(function(%uVar%) {\
-                    %valVar% = %iterVar%[%uVar%];";
+          var str = 'var %iterVar% = %iterate%;' +
+                'if (%iterVar%) {' +
+                  '%keysVar%(%iterVar%).forEach(function(%uVar%) {' +
+                    '%valVar% = %iterVar%[%uVar%];';
 
           return evalStr(str, {
             uVar: uVar,
             valVar: valVar,
             iterVar: iterVar,
+            keysVar: keysVar,
             iterate: iterate
           });
         },
         close: function() {
-          return "});}";
+          return '});}';
         }
       },
       'for': {
@@ -89,10 +93,10 @@
           compiler.mapQuery(index, uVar);
 
 
-          var str = "var %iterVar% = %iterate%;\
-                if (%iterVar%) {\
-                  for (var %uVar% = 0, %lenVar% = %iterVar%.length; %uVar% < %lenVar%; %uVar%++) {\
-                    %valVar% = %iterVar%[%uVar%];";
+          var str = 'var %iterVar% = %iterate%;' +
+                'if (%iterVar%) {' +
+                  'for (var %uVar% = 0, %lenVar% = %iterVar%.length; %uVar% < %lenVar%; %uVar%++) {' +
+                    '%valVar% = %iterVar%[%uVar%];';
 
           return evalStr(str, {
             uVar: uVar,
@@ -103,13 +107,13 @@
           });
         },
         close: function() {
-          return "}}";
+          return '}}';
         }
       },
       'if': {
         pattern: /\{(@EXPR?)\}/,
         open: function(compiler, expr) {
-          return "if (" + compiler.query(expr) + ") {";
+          return 'if (' + compiler.query(expr) + ') {';
         },
         close: function() {
           return '}';
@@ -168,12 +172,12 @@
     }
   },
   entitesMap = {
-    "&": "&#38;",
-    "<": "&#60;",
-    ">": "&#62;",
+    '&': '&#38;',
+    '<': '&#60;',
+    '>': '&#62;',
     '"': '&#34;',
     "'": '&#39;',
-    "/": '&#47;'
+    '/': '&#47;'
   },
   slice = Array.prototype.slice,
   hasOwn = Object.prototype.hasOwnProperty;
@@ -240,8 +244,16 @@
         unsafe;
 
       compiler = {
-        getVar: function() {
-          return VAR_SIGN + uid++;
+        getVar: function(toMap) {
+          if (toMap) {
+            return this.varMap[toMap] || (this.varMap[toMap] = this.getVar());
+          }
+
+          var defined = VAR_SIGN + uid++;
+
+          this.definedVars.push(defined);
+
+          return defined;
         },
         query: JSONQuery,
         mapQuery: function(who, by) {
@@ -255,7 +267,9 @@
             this.queryMap[who] = by;
           }
         },
-        queryMap: {}
+        queryMap: {},
+        varMap: {},
+        definedVars: []
       };
 
       statementReg.lastIndex = 0;
@@ -338,23 +352,16 @@
       }
     }());
 
-    str = "var " + TMP_VAR + ", " + OUTPUT_SIGN + "= '" + str + "'; return " + OUTPUT_SIGN + ";";
+    str = 'var ' + Object.keys(compiler.varMap).map(function(_var) {
+      return  this[_var] + ' = ' + _var;
+    }, compiler.varMap) + ';' +
+      "var " + TMP_VAR + ", " + OUTPUT_SIGN + "= '" + str + "'; return " + OUTPUT_SIGN + ";";
 
     str = str.replace(/\n/g, '\\n').replace(/\t/g, '\\t').replace(/\r/g, '\\r')
       .replace(evalReg(/(\s|;|\}|^|\{)@OUTPUT\+='';/), '$1').replace(/\+''/g, '')
       .replace(evalReg(/(\s|;|\}|^|\{)@OUTPUT\+=''\+/),'$1' + OUTPUT_SIGN + '+=');
 
-    console.log(str);
-
-    try {
-      return new Function('encodeHTML', settings.varname, str);
-    } catch (e) {
-      if (typeof console !== 'undefined') {
-        console.log("Could not create a template function: " + str);
-      }
-
-      throw e;
-    }
+    return str;
   };
 
   window.sharp = sharp;
