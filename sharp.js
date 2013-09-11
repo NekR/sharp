@@ -4,7 +4,8 @@
   var sharp = window.sharp || {};
 
   sharp.VAR_NAME = '$';
-  sharp.HELPERS = 'h';
+  sharp.HELPERS_VAR = 'h';
+  sharp.PARTIALs_VAR = 'p';
 
   (function sharpRuntime(){
     var entitesMap = {
@@ -20,8 +21,8 @@
 
     sharp.runtime = {
       render: function(tpl, data, partials) {
-        tpl = new Function(sharp.HELPERS, sharp.VAR_NAME, tpl);
-        return tpl(sharp.runtime.helpers, data);
+        tpl = new Function(sharp.HELPERS_VAR, sharp.VAR_NAME, sharp.PARTIALs_VAR, tpl);
+        return tpl(sharp.runtime.helpers, data, partials || {});
       },
       helpers: {
         encodeHTML: function(str) {
@@ -46,7 +47,7 @@
         /*,
         LOOK_BEHIND: /(?:(@CLOSE)[\s\S]*)?(@PATTERN)/g*/
       },
-      tokens = {
+      operators = {
         '': {
           pattern: /@EXPR_OPEN(@EXPR?)@EXPR_CLOSE/,
           open: function(compiler, code) {
@@ -152,6 +153,25 @@
           },
           interpolation: true,
           hasUnsafe: true
+        },
+        'def': {
+          pattern: /@EXPR_OPEN(@EXPR?)@EXPR_CLOSE/,
+          open: function(compiler, name) {
+            name = compiler.query(name);
+
+            return sharp.PARTIALs_VAR + '[' + name + '] = function() {';
+          },
+          close: function() {
+            return '};';
+          }
+        },
+        'use': {
+          pattern: /@EXPR_OPEN(@EXPR?)@EXPR_CLOSE/,
+          open: function(compiler, name) {
+            name = compiler.query(name);
+
+            return sharp.PARTIALs_VAR + '[' + name + ']();';
+          }
         }
       };
 
@@ -218,14 +238,16 @@
         strip: true,
         append: true
       },
-      tokens: tokens
+      operators: operators
     };
 
     sharp.compiler.compile = function(str) {
       var settings = sharp.compiler.settings,
         wrapper = settings.append ? wrappers.append : wrappers.split,
-        uid = 0,
-        compiler;
+        uid = 0;
+
+      str = (settings.strip ? str.replace(/(^|\r|\n)\t* +| +\t*(\r|\n|$)/g, ' ')
+            .replace(/\r|\n|\t|\/\*[\s\S]*?\*\//g, '') : str).replace(/'|"|\\/g, '\\$&');
 
       var statementReg = evalReg(STATEMENT),
         match,
@@ -235,7 +257,7 @@
         openStack = [],
         tmp,
         index,
-        token,
+        operator,
         pattern,
         patternMatch,
         patternStart,
@@ -253,10 +275,7 @@
         });
       };
 
-      str = (settings.strip ? str.replace(/(^|\r|\n)\t* +| +\t*(\r|\n|$)/g, ' ')
-            .replace(/\r|\n|\t|\/\*[\s\S]*?\*\//g, '') : str).replace(/'|"|\\/g, '\\$&');
-
-      compiler = {
+      var compiler = {
         getVar: function(toMap) {
           if (toMap) {
             return this.varMap[toMap] || (this.varMap[toMap] = this.getVar());
@@ -269,11 +288,11 @@
           return defined;
         },
         mapQuery: function(who, by) {
-          if (token.close) {
+          if (operator.close) {
             //who = '$.' + who;
 
             var prev = this.queryMap[who],
-              unmap = token.unmap || (token.unmap = []);
+              unmap = operator.unmap || (operator.unmap = []);
             
             unmap.push([who, prev || null]);
             this.queryMap[who] = by;
@@ -285,89 +304,102 @@
         definedVars: []
       };
 
-      encodeHTMLVar = compiler.getVar(sharp.HELPERS + '.encodeHTML');
+      encodeHTMLVar = compiler.getVar(sharp.HELPERS_VAR + '.encodeHTML');
       interpolateVar = compiler.getVar(evalStr(stream.interpolate, {
         encodeHTML: encodeHTMLVar
       }));
 
-      statementReg.lastIndex = 0;
+      var compileContext = function(context) {
+        statementReg.lastIndex = 0;
 
-      while (match = statementReg.exec(str)) {
-        matchStr = match[0];
-        close = match[1];
-        main = match[2];
-        identifier = match[3] || '';
-        index = match.index;
-        tmp = null;
+        while (match = statementReg.exec(str)) {
+          matchStr = match[0];
+          close = match[1];
+          main = match[2];
+          identifier = match[3] || '';
+          index = match.index;
+          tmp = null;
 
-        if (identifier[0] === '!') {
-          unsafe = true;
-          identifier = identifier.slice(1);
-        } else {
-          unsafe = false;
-        }
-
-        if (close) {
-          if (token = openStack.pop()) {
-            tmp = token.close();
-
-            if (!token.noWrap) {
-              tmp = stream.wrap(tmp);
-            }
-
-            if (token.unmap && token.unmap.length) {
-              token.unmap.forEach(function(arr) {
-                compiler.queryMap[arr[0]] = arr[1];
-              });
-
-              token.unmap = null;
-            }
-
-            str = doReplace(str, index, index + close.length + main.length, tmp);
-            index += tmp.length;
-            tmp = token = null;
+          if (identifier[0] === '!') {
+            unsafe = true;
+            identifier = identifier.slice(1);
           } else {
-            throw new SyntaxError();
+            unsafe = false;
           }
-        }
 
-        if (!hasOwn.call(tokens, identifier)) {
-          continue;
-        }
+          if (close) {
+            if (operator = openStack.pop()) {
+              tmp = operator.close();
 
-        token = tokens[identifier];
-        pattern = '\\s*' + getRegStr(token.pattern);
+              if (!operator.noWrap) {
+                tmp = stream.wrap(tmp);
+              }
 
-        if (token.close) {
-          openStack.push(token);
-          pattern += getRegStr(consts.BLOCK_OPEN);
-        }
+              if (operator.unmap && operator.unmap.length) {
+                operator.unmap.forEach(function(arr) {
+                  compiler.queryMap[arr[0]] = arr[1];
+                });
 
-        pattern = evalReg(pattern);
-        pattern.lastIndex = patternStart =
-          index + (close ? identifier.length : main.length + identifier.length) + unsafe;
-        patternMatch = pattern.exec(str);
+                operator.unmap = null;
+              }
 
-        if (patternMatch && patternMatch.index === patternStart) {
-          patternMatchStr = patternMatch[0];
-          tmp = [compiler].concat(patternMatch.slice(1));
-          tmp = token.open.apply(token, tmp);
-
-          if (!token.noWrap) {
-            if (token.interpolation) {
-              tmp = wrap(tmp, token.hasUnsafe && unsafe);
+              str = doReplace(str, index, index + close.length + main.length, tmp);
+              index += tmp.length;
+              tmp = operator = null;
             } else {
-              tmp = stream.wrap(tmp);
+              throw new SyntaxError();
             }
           }
 
-          str = doReplace(
-            str, index,
-            patternStart + patternMatchStr.length,
-            tmp
-          );
+          if (!hasOwn.call(operators, identifier)) {
+            continue;
+          }
+
+          operator = operators[identifier];
+          pattern = '\\s*' + getRegStr(operator.pattern);
+
+          if (operator.close) {
+            openStack.push(operator);
+            pattern += getRegStr(consts.BLOCK_OPEN);
+          }
+
+          pattern = evalReg(pattern);
+          pattern.lastIndex = patternStart =
+            index + (close ? identifier.length : main.length + identifier.length) + unsafe;
+
+          patternMatch = pattern.exec(str);
+
+          if (patternMatch && patternMatch.index === patternStart) {
+            patternMatchStr = patternMatch[0];
+            patternMatch[0] = compiler;
+
+            // tmp = patternMatch;
+            // tmp = [compiler].concat(patternMatch.slice(1));
+            tmp = operator.open.apply(operator, patternMatch);
+
+            if (!operator.noWrap) {
+              if (operator.interpolation) {
+                tmp = wrap(tmp, operator.hasUnsafe && unsafe);
+              } else {
+                tmp = stream.wrap(tmp);
+              }
+            }
+
+            // just for test
+            statementReg.lastIndex = index + tmp.length;
+
+            str = doReplace(
+              str, index,
+              patternStart + patternMatchStr.length,
+              tmp
+            );
+          }
         }
-      }
+
+        return context;
+      };
+
+      var context = compileContext([]);
 
       str = 'var ' + Object.keys(compiler.varMap).map(function(_var) {
         return  this[_var] + ' = ' + _var;
