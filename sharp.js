@@ -19,16 +19,22 @@
 
     var R_MATCH_ENTITES = /&(?!#?\w+;)|<|>|"|'|\//g;
 
+    var encodeHTML = function(str) {
+      return str.replace(R_MATCH_ENTITES, function(m) {
+        return entitesMap[m] || m;
+      });
+    };
+
     sharp.runtime = {
       render: function(tpl, data, partials) {
         tpl = new Function(sharp.HELPERS_VAR, sharp.VAR_NAME, sharp.PARTIALs_VAR, tpl);
         return tpl(sharp.runtime.helpers, data, partials || {});
       },
       helpers: {
-        encodeHTML: function(str) {
-          return str.replace(R_MATCH_ENTITES, function(m) {
-            return entitesMap[m] || m;
-          });
+        interpolate: function(data, safe) {
+          var res = ((res = data) == null ? '' : res + '');
+
+          return safe ? res : encodeHTML(res);
         }
       }
     };
@@ -185,9 +191,7 @@
       },
       wrap: function(str) {
         return this.close() + str + this.open();
-      },
-      interpolate: "function(data, safe) {" +
-        "var res = ((res = data) == null ? '' : res) + ''; return safe ? res : %encodeHTML%(res);}"
+      }
     },
     wrappers = {
       append: "' + %interpolate%(%data%, %safe%) + '",
@@ -267,8 +271,7 @@
         patternMatchStr,
         main,
         unsafe,
-        interpolateVar,
-        encodeHTMLVar;
+        interpolateVar;
 
       var wrap = function(data, unsafe) {
         return evalStr(wrapper, {
@@ -290,15 +293,15 @@
 
           return defined;
         },
-        mapQuery: function(who, by) {
+        mapQuery: function(query, _var) {
           if (operator.close) {
-            //who = '$.' + who;
+            //query = '$.' + query;
 
-            var prev = this.queryMap[who],
+            var prev = this.queryMap[query],
               unmap = operator.unmap || (operator.unmap = []);
             
-            unmap.push([who, prev || null]);
-            this.queryMap[who] = by;
+            unmap.push([query, prev || null]);
+            this.queryMap[query] = _var;
           }
         },
         query: JSONQuery,
@@ -307,10 +310,7 @@
         definedVars: []
       };
 
-      encodeHTMLVar = compiler.getVar(sharp.HELPERS_VAR + '.encodeHTML');
-      interpolateVar = compiler.getVar(evalStr(stream.interpolate, {
-        encodeHTML: encodeHTMLVar
-      }));
+      interpolateVar = compiler.getVar(sharp.HELPERS_VAR + '.interpolate');
 
       var compileContext = function(context) {
         statementReg.lastIndex = 0;

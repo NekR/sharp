@@ -29,6 +29,8 @@
   tpl = tpl.innerHTML;
   tpl = sharp.compiler.compile(tpl);
 
+  console.log(tpl);
+
   tpl = sharp.runtime.render(tpl, {
     test: {
       a: 1,
