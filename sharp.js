@@ -42,7 +42,8 @@
         BLOCK_OPEN: /\s*\{\s*/,
         BLOCK_CLOSE: /\s*\}\s*/,
         EXPR_OPEN: /\{/,
-        EXPR_CLOSE: /\}(?![\s\S]*?\};);?/,
+        EXPR_CLOSE: /\}/,
+        DELIMITER: /\s+->\s+/,
         OUTPUT: new RegExp(OUTPUT_SIGN)
         /*,
         LOOK_BEHIND: /(?:(@CLOSE)[\s\S]*)?(@PATTERN)/g*/
@@ -57,7 +58,7 @@
           hasUnsafe: true
         },
         'each': {
-          pattern: /\{\s*(@EXPR?)\s+->\s+([\w_]+?)\s*,\s*?([\w_]+?)\}/,
+          pattern: /\{\s*(@EXPR?)@DELIMITER([\w_]+?)\s*,\s*?([\w_]+?)\}/,
           open: function(compiler, iterate, key, value) {
             var uVar = compiler.getVar(),
               iterVar = compiler.getVar(),
@@ -361,6 +362,9 @@
           if (operator.close) {
             openStack.push(operator);
             pattern += getRegStr(consts.BLOCK_OPEN);
+          } else {
+            pattern += getRegStr(/(?!(?:[\s\S](?!@EXPR_CLOSE;))*?@EXPR_CLOSE;);?/);
+            console.log(evalReg(pattern));
           }
 
           pattern = evalReg(pattern);
