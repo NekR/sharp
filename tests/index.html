@@ -1,0 +1,43 @@
+<!doctype html>
+
+<script src="../sharp.js"></script>
+
+<script id="tpl" type="text/x-stpl">
+  #!json{[{a: 1}]};
+
+  #{a}
+
+  #{Date()};
+
+  #each {test -> key, value} {
+    <p>#{key};: #{value};</p>
+  }#
+
+  #def {"test"} {
+    #{123};
+    #{a};
+  }#
+
+  #use{"test"};
+</script>
+
+<div id="out"></div>
+
+<script>
+  var tpl = document.getElementById('tpl');
+
+  tpl = tpl.innerHTML;
+  tpl = sharp.compiler.compile(tpl);
+
+  tpl = sharp.runtime.render(tpl, {
+    test: {
+      a: 1,
+      b: 3,
+      c: 10
+    },
+    a: 'ggg'
+  });
+
+  document.getElementById('out').innerHTML = tpl;
+
+</script>

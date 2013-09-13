@@ -234,6 +234,8 @@
       });
     };
 
+    consts.STATEMENT = evalReg(STATEMENT);
+
     sharp.compiler = {
       settings: {
         strip: true,
@@ -363,8 +365,7 @@
             openStack.push(operator);
             pattern += getRegStr(consts.BLOCK_OPEN);
           } else {
-            pattern += getRegStr(/(?!(?:[\s\S](?!@EXPR_CLOSE;))*?@EXPR_CLOSE;);?/);
-            console.log(evalReg(pattern));
+            pattern += getRegStr(/(?:(?!(?:[\s\S](?!(?:@STATEMENT)))*?@EXPR_CLOSE)|(?:@EXPR_CLOSE));?/);
           }
 
           pattern = evalReg(pattern);
