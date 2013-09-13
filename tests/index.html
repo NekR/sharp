@@ -3,22 +3,28 @@
 <script src="../sharp.js"></script>
 
 <script id="tpl" type="text/x-stpl">
-  #!json{[{a: 1}]};
+  #!json([{a: 1}]);
 
-  #{a}
+  #(a)
 
-  #{Date()};
+  #(Date());
 
-  #each {test -> key, value} {
-    <p>#{key};: #{value};</p>
+  #each (test -> key, value) {
+    <p>#(key);: #(value);</p>
   }#
 
-  #def {"test"} {
-    #{123};
-    #{a};
+  #def ("test") {
+    #(123);
+    #(a);
   }#
 
-  #use{"test"};
+  #use("test");
+
+  #if (1) {
+    blah
+  } #else {
+    nothing
+  }#
 </script>
 
 <div id="out"></div>
@@ -28,8 +34,6 @@
 
   tpl = tpl.innerHTML;
   tpl = sharp.compiler.compile(tpl);
-
-  console.log(tpl);
 
   tpl = sharp.runtime.render(tpl, {
     test: {

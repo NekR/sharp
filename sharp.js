@@ -41,14 +41,22 @@
   }());
 
   (function sharpCompiler() {
+    var R_UNESCAPE_1 = /\\(['"\\])/g,
+      R_UNESCAPE_2 = /[\r\t\n]/g,
+      R_EVAL_STR = /%(\w+)%/g,
+      OUTPUT_SIGN = 'out',
+      VAR_SIGN = 'v',
+      TMP_VAR = 'tmp',
+      STATEMENT = /(@BLOCK_CLOSE)?(@MAIN)(@IDENTIFIER)?/g;
+
     var consts = {
         MAIN: /#/,
         EXPR: /[\s\S]+/,
         IDENTIFIER: /[A-Za-z_!:][A-Za-z_!:\d]*/,
         BLOCK_OPEN: /\s*\{\s*/,
         BLOCK_CLOSE: /\s*\}\s*/,
-        EXPR_OPEN: /\{/,
-        EXPR_CLOSE: /\}/,
+        EXPR_OPEN: /\(/,
+        EXPR_CLOSE: /\)/,
         DELIMITER: /\s+->\s+/,
         OUTPUT: new RegExp(OUTPUT_SIGN)
         /*,
@@ -64,7 +72,7 @@
           hasUnsafe: true
         },
         'each': {
-          pattern: /\{\s*(@EXPR?)@DELIMITER([\w_]+?)\s*,\s*?([\w_]+?)\}/,
+          pattern: /@EXPR_OPEN\s*(@EXPR?)@DELIMITER([\w_]+?)\s*,\s*?([\w_]+?)@EXPR_CLOSE/,
           open: function(compiler, iterate, key, value) {
             var uVar = compiler.getVar(),
               iterVar = compiler.getVar(),
@@ -94,7 +102,7 @@
           }
         },
         'for': {
-          pattern: /\{\s*(@EXPR?)\s+->\s+([\w_]+?)\s*(?:,\s*?([\w_]+?))?\}/,
+          pattern: /@EXPR_OPEN\s*(@EXPR?)\s+->\s+([\w_]+?)\s*(?:,\s*?([\w_]+?))?@EXPR_CLOSE/,
           open: function(compiler, iterate, value, index) {
             var uVar = compiler.getVar(),
               iterVar = compiler.getVar(),
@@ -125,13 +133,13 @@
           }
         },
         'if': {
-          pattern: /\{(@EXPR?)\}/,
+          pattern: /@EXPR_OPEN(@EXPR?)@EXPR_CLOSE/,
           open: function(compiler, expr) {
             return 'if (' + compiler.query(expr) + ') {';
           },
           close: function() {
             return '}';
-          }
+          },
         },
         'else': {
           pattern: /(?:)/,
@@ -143,7 +151,7 @@
           }
         },
         'elseif': {
-          pattern: /\{(@EXPR?)\}/,
+          pattern: /@EXPR_OPEN(@EXPR?)@EXPR_CLOSE/,
           open: function(compiler, expr) {
             return "else if (" + compiler.query(expr) + ") {";
           },
@@ -199,14 +207,6 @@
     },
     slice = Array.prototype.slice,
     hasOwn = Object.prototype.hasOwnProperty;
-
-    var R_UNESCAPE_1 = /\\(['"\\])/g,
-      R_UNESCAPE_2 = /[\r\t\n]/g,
-      R_EVAL_STR = /%(\w+)%/g,
-      OUTPUT_SIGN = 'out',
-      VAR_SIGN = 'v',
-      TMP_VAR = 'tmp',
-      STATEMENT = /(@BLOCK_CLOSE)?(@MAIN)(@IDENTIFIER)?/g;
 
     var unescape = function(code) {
       return code.replace(R_UNESCAPE_1, '$1').replace(R_UNESCAPE_2, ' ');
@@ -365,7 +365,7 @@
             openStack.push(operator);
             pattern += getRegStr(consts.BLOCK_OPEN);
           } else {
-            pattern += getRegStr(/(?:(?!(?:[\s\S](?!(?:@STATEMENT)))*?@EXPR_CLOSE)|(?:@EXPR_CLOSE));?/);
+            pattern += getRegStr(/(?:(?!(?:[\s\S](?!(?:@STATEMENT)))*?@EXPR_CLOSE));?/);
           }
 
           pattern = evalReg(pattern);
@@ -414,6 +414,8 @@
       str = str.replace(/\n/g, '\\n').replace(/\t/g, '\\t').replace(/\r/g, '\\r')
         .replace(evalReg(/(\s|;|\}|^|\{)@OUTPUT\+='';/), '$1').replace(/\+''/g, '')
         .replace(evalReg(/(\s|;|\}|^|\{)@OUTPUT\+=''\+/),'$1' + OUTPUT_SIGN + '+=');
+
+      console.log(str);
 
       return str;
     };
