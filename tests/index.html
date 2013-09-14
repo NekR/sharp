@@ -5,7 +5,7 @@
 <script id="tpl" type="text/x-stpl">
   #!json([{a: 1}]);
 
-  #(a)
+  <div>#(a)</div>
 
   #(Date());
 
@@ -22,6 +22,8 @@
 
   <br><b>#if (Math.round(Math.random())) {
     blah
+  } #elseif (Math.round(Math.random())) {
+    other
   } #else {
     nothing
   }#</b>

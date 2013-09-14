@@ -51,145 +51,19 @@
       R_EXPR_END = /(?:(?!(?:[\s\S](?!(?:@STATEMENT)))*?@EXPR_CLOSE));?/;
 
     var consts = {
-        MAIN: /#/,
-        EXPR: /[\s\S]+/,
-        IDENTIFIER: /[A-Za-z_!:][A-Za-z_!:\d]*/,
-        BLOCK_OPEN: /\s*\{\s*/,
-        BLOCK_CLOSE: /\s*\}\s*/,
-        EXPR_OPEN: /\(/,
-        EXPR_CLOSE: /\)/,
-        DELIMITER: /\s+->\s+/,
-        OUTPUT: new RegExp(OUTPUT_SIGN)
-        /*,
-        LOOK_BEHIND: /(?:(@CLOSE)[\s\S]*)?(@PATTERN)/g*/
-      },
-      operators = {
-        '': {
-          pattern: /@EXPR_OPEN(@EXPR?)@EXPR_CLOSE/,
-          open: function(compiler, code) {
-            return compiler.query(code);
-          },
-          interpolation: true,
-          hasUnsafe: true
-        },
-        'each': {
-          pattern: /@EXPR_OPEN\s*(@EXPR?)@DELIMITER([\w_]+?)\s*,\s*?([\w_]+?)@EXPR_CLOSE/,
-          open: function(compiler, iterate, key, value) {
-            var uVar = compiler.getVar(),
-              iterVar = compiler.getVar(),
-              valVar = compiler.getVar(),
-              keysVar = compiler.getVar('Object.keys');
-
-            iterate = compiler.query(iterate);
-
-            compiler.mapQuery(value, valVar)
-            compiler.mapQuery(key, uVar);
-
-            var str = 'var %iterVar% = %iterate%;' +
-                  'if (%iterVar%) {' +
-                    '%keysVar%(%iterVar%).forEach(function(%uVar%) {' +
-                      '%valVar% = %iterVar%[%uVar%];';
-
-            return evalStr(str, {
-              uVar: uVar,
-              valVar: valVar,
-              iterVar: iterVar,
-              keysVar: keysVar,
-              iterate: iterate
-            });
-          },
-          close: function() {
-            return '});}';
-          }
-        },
-        'for': {
-          pattern: /@EXPR_OPEN\s*(@EXPR?)\s+->\s+([\w_]+?)\s*(?:,\s*?([\w_]+?))?@EXPR_CLOSE/,
-          open: function(compiler, iterate, value, index) {
-            var uVar = compiler.getVar(),
-              iterVar = compiler.getVar(),
-              lenVar = compiler.getVar(),
-              valVar = compiler.getVar();
-
-            iterate = compiler.query(iterate);
-
-            compiler.mapQuery(value, valVar)
-            compiler.mapQuery(index, uVar);
-
-
-            var str = 'var %iterVar% = %iterate%;' +
-                  'if (%iterVar%) {' +
-                    'for (var %uVar% = 0, %lenVar% = %iterVar%.length; %uVar% < %lenVar%; %uVar%++) {' +
-                      '%valVar% = %iterVar%[%uVar%];';
-
-            return evalStr(str, {
-              uVar: uVar,
-              iterVar: iterVar,
-              lenVar: lenVar,
-              valVar: valVar,
-              iterate: iterate
-            });
-          },
-          close: function() {
-            return '}}';
-          }
-        },
-        'if': {
-          pattern: /@EXPR_OPEN(@EXPR?)@EXPR_CLOSE/,
-          open: function(compiler, expr) {
-            return 'if (' + compiler.query(expr) + ') {';
-          },
-          close: function() {
-            return '}';
-          },
-        },
-        'else': {
-          pattern: /(?:)/,
-          open: function() {
-            return 'else {'
-          },
-          close: function() {
-            return '}';
-          }
-        },
-        'elseif': {
-          pattern: /@EXPR_OPEN(@EXPR?)@EXPR_CLOSE/,
-          open: function(compiler, expr) {
-            return "else if (" + compiler.query(expr) + ") {";
-          },
-          close: function() {
-            return '}';
-          }
-        },
-        'json': {
-          pattern: /@EXPR_OPEN(@EXPR?)@EXPR_CLOSE/,
-          open: function(compiler, expr) {
-            var stringifyVar = compiler.getVar('JSON.stringify');
-
-            return stringifyVar + '(' + compiler.query(expr) + ')';
-          },
-          interpolation: true,
-          hasUnsafe: true
-        },
-        'def': {
-          pattern: /@EXPR_OPEN(@EXPR?)@EXPR_CLOSE/,
-          open: function(compiler, name) {
-            name = compiler.query(name);
-
-            return sharp.PARTIALs_VAR + '[' + name + '] = function() {';
-          },
-          close: function() {
-            return '};';
-          }
-        },
-        'use': {
-          pattern: /@EXPR_OPEN(@EXPR?)@EXPR_CLOSE/,
-          open: function(compiler, name) {
-            name = compiler.query(name);
-
-            return sharp.PARTIALs_VAR + '[' + name + ']();';
-          }
-        }
-      };
+      MAIN: /#/,
+      EXPR: /[\s\S]+/,
+      IDENTIFIER: /[A-Za-z_!:][A-Za-z_!:\d]*/,
+      BLOCK_OPEN: /\s*\{\s*/,
+      BLOCK_CLOSE: /\s*\}\s*/,
+      EXPR_OPEN: /\(/,
+      EXPR_CLOSE: /\)/,
+      DELIMITER: /\s+->\s+/,
+      OUTPUT: new RegExp(OUTPUT_SIGN)
+      /*,
+      LOOK_BEHIND: /(?:(@CLOSE)[\s\S]*)?(@PATTERN)/g*/
+    },
+    operators = {};
 
     var stream = {
       open: function() {
@@ -359,7 +233,7 @@
             continue;
           }
 
-          operator = operators[identifier];
+          operator = new operators[identifier];
           pattern = '\\s*' + getRegStr(operator.pattern);
 
           if (operator.close) {
@@ -464,6 +338,147 @@
 
       return str;
     };
+
+    sharp.compiler.addOperator = function(identifier, config) {
+      var constructor = function() {};
+      constructor.prototype = config;
+
+      operators[identifier] = constructor;
+    };
+
+    var defineOperators = {
+      '': {
+        pattern: /@EXPR_OPEN(@EXPR?)@EXPR_CLOSE/,
+        open: function(compiler, code) {
+          return compiler.query(code);
+        },
+        interpolation: true,
+        hasUnsafe: true
+      },
+      'each': {
+        pattern: /@EXPR_OPEN\s*(@EXPR?)@DELIMITER([\w_]+?)\s*,\s*?([\w_]+?)@EXPR_CLOSE/,
+        open: function(compiler, iterate, key, value) {
+          var uVar = compiler.getVar(),
+            iterVar = compiler.getVar(),
+            valVar = compiler.getVar(),
+            keysVar = compiler.getVar('Object.keys');
+
+          iterate = compiler.query(iterate);
+
+          compiler.mapQuery(value, valVar)
+          compiler.mapQuery(key, uVar);
+
+          var str = 'var %iterVar% = %iterate%;' +
+                'if (%iterVar%) {' +
+                  '%keysVar%(%iterVar%).forEach(function(%uVar%) {' +
+                    '%valVar% = %iterVar%[%uVar%];';
+
+          return evalStr(str, {
+            uVar: uVar,
+            valVar: valVar,
+            iterVar: iterVar,
+            keysVar: keysVar,
+            iterate: iterate
+          });
+        },
+        close: function() {
+          return '});}';
+        }
+      },
+      'for': {
+        pattern: /@EXPR_OPEN\s*(@EXPR?)\s+->\s+([\w_]+?)\s*(?:,\s*?([\w_]+?))?@EXPR_CLOSE/,
+        open: function(compiler, iterate, value, index) {
+          var uVar = compiler.getVar(),
+            iterVar = compiler.getVar(),
+            lenVar = compiler.getVar(),
+            valVar = compiler.getVar();
+
+          iterate = compiler.query(iterate);
+
+          compiler.mapQuery(value, valVar)
+          compiler.mapQuery(index, uVar);
+
+
+          var str = 'var %iterVar% = %iterate%;' +
+                'if (%iterVar%) {' +
+                  'for (var %uVar% = 0, %lenVar% = %iterVar%.length; %uVar% < %lenVar%; %uVar%++) {' +
+                    '%valVar% = %iterVar%[%uVar%];';
+
+          return evalStr(str, {
+            uVar: uVar,
+            iterVar: iterVar,
+            lenVar: lenVar,
+            valVar: valVar,
+            iterate: iterate
+          });
+        },
+        close: function() {
+          return '}}';
+        }
+      },
+      'if': {
+        pattern: /@EXPR_OPEN(@EXPR?)@EXPR_CLOSE/,
+        open: function(compiler, expr) {
+          return 'if (' + compiler.query(expr) + ') {';
+        },
+        close: function() {
+          return '}';
+        },
+      },
+      'else': {
+        pattern: /(?:)/,
+        open: function() {
+          return 'else {'
+        },
+        close: function() {
+          return '}';
+        }
+      },
+      'elseif': {
+        pattern: /@EXPR_OPEN(@EXPR?)@EXPR_CLOSE/,
+        open: function(compiler, expr) {
+          return "else if (" + compiler.query(expr) + ") {";
+        },
+        close: function() {
+          return '}';
+        }
+      },
+      'json': {
+        pattern: /@EXPR_OPEN(@EXPR?)@EXPR_CLOSE/,
+        open: function(compiler, expr) {
+          var stringifyVar = compiler.getVar('JSON.stringify');
+
+          return stringifyVar + '(' + compiler.query(expr) + ')';
+        },
+        interpolation: true,
+        hasUnsafe: true
+      },
+      'def': {
+        pattern: /@EXPR_OPEN(@EXPR?)@EXPR_CLOSE/,
+        open: function(compiler, name) {
+          name = compiler.query(name);
+
+          return sharp.PARTIALs_VAR + '[' + name + '] = function() {';
+        },
+        close: function() {
+          return '};';
+        }
+      },
+      'use': {
+        pattern: /@EXPR_OPEN(@EXPR?)@EXPR_CLOSE/,
+        open: function(compiler, name) {
+          name = compiler.query(name);
+
+          return sharp.PARTIALs_VAR + '[' + name + ']();';
+        }
+      }
+    };
+
+    Object.keys(defineOperators).forEach(function(identifier) {
+      var config = defineOperators[identifier];
+
+      sharp.compiler.addOperator(identifier, config);
+    });
 
     function JSONQuery(query, obj, args, context) {
       var depth = 0,
