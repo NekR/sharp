@@ -257,23 +257,6 @@
       str = (settings.strip ? str.replace(/(^|\r|\n)\t* +| +\t*(\r|\n|$)/g, ' ')
             .replace(/\r|\n|\t|\/\*[\s\S]*?\*\//g, '') : str).replace(/'|"|\\/g, '\\$&');
 
-      var statementReg = evalReg(R_STATEMENT),
-        match,
-        matchStr,
-        close,
-        identifier,
-        openStack = [],
-        tmp,
-        index = 0,
-        operator,
-        pattern,
-        patternMatch,
-        patternStart,
-        patternMatchStr,
-        main,
-        unsafe,
-        interpolateVar;
-
       var wrap = function(data, unsafe) {
         return evalStr(wrapper, {
           data: data,
@@ -295,7 +278,7 @@
           return defined;
         },
         mapQuery: function(query, _var) {
-          var operator = this._operator;
+          var operator = compilerOperator;
 
           if (operator.close) {
             //query = '$.' + query;
@@ -313,11 +296,26 @@
         definedVars: []
       };
 
-      interpolateVar = compiler.getVar(sharp.HELPERS_VAR + '.interpolate');
+      var interpolateVar = compiler.getVar(sharp.HELPERS_VAR + '.interpolate'),
+        compilerOperator;
 
       var makeTokens = function() {
         var tokens = [],
-          hasIdentifier;
+          hasIdentifier,
+          statementReg = evalReg(R_STATEMENT),
+          match,
+          matchStr,
+          close,
+          identifier,
+          openStack = [],
+          tmp,
+          index = 0,
+          operator,
+          pattern,
+          patternMatch,
+          patternMatchStr,
+          main,
+          unsafe;
 
         statementReg.lastIndex = 0;
 
@@ -407,7 +405,7 @@
               var operator = token.data,
                 tmp;
 
-              compiler._operator = operator;
+              compilerOperator = operator;
 
               tmp = operator.open.apply(operator, token.args);
 
@@ -425,7 +423,7 @@
               var operator = token.data,
                 tmp = operator.close();
 
-              compiler._operator = operator;
+              compilerOperator = operator;
 
               if (!operator.noWrap) {
                 tmp = stream.wrap(tmp);
@@ -443,7 +441,7 @@
             }; break;
           }
 
-          compiler._operator = null;
+          compilerOperator = null;
         });
 
         return str;
@@ -451,103 +449,7 @@
 
       var tokens = makeTokens();
 
-      console.log(tokens.filter(function(a) { return a.type === 'string'}).map(function(a) { return a.data}));
-
       str = makeString(tokens);
-
-      var compileContext = function(context) {
-        statementReg.lastIndex = 0;
-
-        while (match = statementReg.exec(str)) {
-          matchStr = match[0];
-          close = match[1];
-          main = match[2];
-          identifier = match[3] || '';
-          index = match.index;
-          tmp = null;
-
-          if (identifier[0] === '!') {
-            unsafe = true;
-            identifier = identifier.slice(1);
-          } else {
-            unsafe = false;
-          }
-
-          if (close) {
-            if (operator = openStack.pop()) {
-              tmp = operator.close();
-
-              if (!operator.noWrap) {
-                tmp = stream.wrap(tmp);
-              }
-
-              if (operator.unmap && operator.unmap.length) {
-                operator.unmap.forEach(function(arr) {
-                  compiler.queryMap[arr[0]] = arr[1];
-                });
-
-                operator.unmap = null;
-              }
-
-              str = doReplace(str, index, index + close.length + main.length, tmp);
-              index += tmp.length;
-              tmp = operator = null;
-            } else {
-              throw new SyntaxError();
-            }
-          }
-
-          if (!hasOwn.call(operators, identifier)) {
-            continue;
-          }
-
-          operator = operators[identifier];
-          pattern = '\\s*' + getRegStr(operator.pattern);
-
-          if (operator.close) {
-            openStack.push(operator);
-            pattern += getRegStr(consts.BLOCK_OPEN);
-          } else {
-            pattern += getRegStr(/(?:(?!(?:[\s\S](?!(?:@STATEMENT)))*?@EXPR_CLOSE));?/);
-          }
-
-          pattern = evalReg(pattern);
-          pattern.lastIndex = patternStart =
-            index + (close ? identifier.length : main.length + identifier.length) + unsafe;
-
-          patternMatch = pattern.exec(str);
-
-          if (patternMatch && patternMatch.index === patternStart) {
-            patternMatchStr = patternMatch[0];
-            patternMatch[0] = compiler;
-
-            // tmp = patternMatch;
-            // tmp = [compiler].concat(patternMatch.slice(1));
-            tmp = operator.open.apply(operator, patternMatch);
-
-            if (!operator.noWrap) {
-              if (operator.interpolation) {
-                tmp = wrap(tmp, operator.hasUnsafe && unsafe);
-              } else {
-                tmp = stream.wrap(tmp);
-              }
-            }
-
-            // just for test
-            statementReg.lastIndex = index + tmp.length;
-
-            str = doReplace(
-              str, index,
-              patternStart + patternMatchStr.length,
-              tmp
-            );
-          }
-        }
-
-        return context;
-      };
-
-      //var context = compileContext([]);
 
       str = 'var ' + Object.keys(compiler.varMap).map(function(_var) {
         return  this[_var] + ' = ' + _var;
