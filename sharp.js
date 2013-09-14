@@ -47,7 +47,8 @@
       OUTPUT_SIGN = 'out',
       VAR_SIGN = 'v',
       TMP_VAR = 'tmp',
-      STATEMENT = /(@BLOCK_CLOSE)?(@MAIN)(@IDENTIFIER)?/g;
+      R_STATEMENT = /(@BLOCK_CLOSE)?(@MAIN)(@IDENTIFIER)?/g,
+      R_EXPR_END = /(?:(?!(?:[\s\S](?!(?:@STATEMENT)))*?@EXPR_CLOSE));?/;
 
     var consts = {
         MAIN: /#/,
@@ -238,7 +239,7 @@
       });
     };
 
-    consts.STATEMENT = evalReg(STATEMENT);
+    consts.STATEMENT = evalReg(R_STATEMENT);
 
     sharp.compiler = {
       settings: {
@@ -256,14 +257,14 @@
       str = (settings.strip ? str.replace(/(^|\r|\n)\t* +| +\t*(\r|\n|$)/g, ' ')
             .replace(/\r|\n|\t|\/\*[\s\S]*?\*\//g, '') : str).replace(/'|"|\\/g, '\\$&');
 
-      var statementReg = evalReg(STATEMENT),
+      var statementReg = evalReg(R_STATEMENT),
         match,
         matchStr,
         close,
         identifier,
         openStack = [],
         tmp,
-        index,
+        index = 0,
         operator,
         pattern,
         patternMatch,
@@ -294,6 +295,8 @@
           return defined;
         },
         mapQuery: function(query, _var) {
+          var operator = this._operator;
+
           if (operator.close) {
             //query = '$.' + query;
 
@@ -311,6 +314,146 @@
       };
 
       interpolateVar = compiler.getVar(sharp.HELPERS_VAR + '.interpolate');
+
+      var makeTokens = function() {
+        var tokens = [],
+          hasIdentifier;
+
+        statementReg.lastIndex = 0;
+
+        while (match = statementReg.exec(str)) {
+          matchStr = match[0];
+          close = match[1];
+          main = match[2];
+          identifier = match[3] || '';
+          tmp = null;
+
+          tokens.push({
+            type: 'string',
+            data: str.slice(index, index = match.index)
+          });
+
+          if (identifier[0] === '!') {
+            unsafe = true;
+            identifier = identifier.slice(1);
+          } else {
+            unsafe = false;
+          }
+
+          hasIdentifier = hasOwn.call(operators, identifier);
+
+          if (close) {
+            if (operator = openStack.pop()) {
+              tokens.push({
+                type: 'close',
+                data: operator
+              });
+
+              index += matchStr.length;
+
+              tmp = operator = null;
+            } else {
+              throw new SyntaxError();
+            }
+          }
+
+          if (!hasIdentifier) {
+            continue;
+          }
+
+          operator = operators[identifier];
+          pattern = '\\s*' + getRegStr(operator.pattern);
+
+          if (operator.close) {
+            openStack.push(operator);
+            pattern += getRegStr(consts.BLOCK_OPEN);
+          } else {
+            pattern += getRegStr(R_EXPR_END);
+          }
+
+          pattern = evalReg(pattern);
+          index = pattern.lastIndex = index + (close ? 0 : matchStr.length);
+
+          patternMatch = pattern.exec(str);
+
+          if (patternMatch && patternMatch.index === index) {
+            patternMatchStr = patternMatch[0];
+            patternMatch[0] = compiler;
+
+            tokens.push({
+              type: 'open',
+              data: operator,
+              args: patternMatch,
+              unsafe: unsafe,
+              str: patternMatchStr
+            });
+
+            console.log(identifier + ':', patternMatchStr, pattern);
+            index += patternMatchStr.length;
+          }
+        }
+
+        return tokens;
+      },
+      makeString = function(tokens) {
+        var str = '';
+
+        tokens.forEach(function(token) {
+          switch (token.type) {
+            case 'string': {
+              str += token.data;
+            }; break;
+            case 'open': {
+              var operator = token.data,
+                tmp;
+
+              compiler._operator = operator;
+
+              tmp = operator.open.apply(operator, token.args);
+
+              if (!operator.noWrap) {
+                if (operator.interpolation) {
+                  tmp = wrap(tmp, operator.hasUnsafe && token.unsafe);
+                } else {
+                  tmp = stream.wrap(tmp);
+                }
+              }
+
+              str += tmp;
+            }; break;
+            case 'close': {
+              var operator = token.data,
+                tmp = operator.close();
+
+              compiler._operator = operator;
+
+              if (!operator.noWrap) {
+                tmp = stream.wrap(tmp);
+              }
+
+              if (operator.unmap && operator.unmap.length) {
+                operator.unmap.forEach(function(arr) {
+                  compiler.queryMap[arr[0]] = arr[1];
+                });
+
+                operator.unmap = null;
+              }
+
+              str += tmp;
+            }; break;
+          }
+
+          compiler._operator = null;
+        });
+
+        return str;
+      };
+
+      var tokens = makeTokens();
+
+      console.log(tokens.filter(function(a) { return a.type === 'string'}).map(function(a) { return a.data}));
+
+      str = makeString(tokens);
 
       var compileContext = function(context) {
         statementReg.lastIndex = 0;
@@ -404,7 +547,7 @@
         return context;
       };
 
-      var context = compileContext([]);
+      //var context = compileContext([]);
 
       str = 'var ' + Object.keys(compiler.varMap).map(function(_var) {
         return  this[_var] + ' = ' + _var;
@@ -423,7 +566,6 @@
     function JSONQuery(query, obj, args, context) {
       var depth = 0,
         strings = [],
-        executor,
         compiler = this,
         queryMap = this.queryMap;
 
