@@ -5,7 +5,7 @@
 
   sharp.VAR_NAME = '$';
   sharp.HELPERS_VAR = 'h';
-  sharp.PARTIALs_VAR = 'p';
+  sharp.PARTIALS_VAR = 'p';
 
   (function sharpRuntime(){
     var entitesMap = {
@@ -27,7 +27,7 @@
 
     sharp.runtime = {
       render: function(tpl, data, partials) {
-        tpl = new Function(sharp.HELPERS_VAR, sharp.VAR_NAME, sharp.PARTIALs_VAR, tpl);
+        tpl = new Function(sharp.HELPERS_VAR, sharp.VAR_NAME, sharp.PARTIALS_VAR, tpl);
         return tpl(sharp.runtime.helpers, data, partials || {});
       },
       helpers: {
@@ -52,13 +52,14 @@
 
     var consts = {
       MAIN: /#/,
-      EXPR: /[\s\S]+/,
+      QUERY: /[\s\S]+/,
       IDENTIFIER: /[A-Za-z_!:][A-Za-z_!:\d]*/,
       BLOCK_OPEN: /\s*\{\s*/,
       BLOCK_CLOSE: /\s*\}\s*/,
       EXPR_OPEN: /\(/,
       EXPR_CLOSE: /\)/,
       DELIMITER: /\s+->\s+/,
+      STRING: /\\"[^"]*?\\"/,
       OUTPUT: new RegExp(OUTPUT_SIGN)
       /*,
       LOOK_BEHIND: /(?:(@CLOSE)[\s\S]*)?(@PATTERN)/g*/
@@ -134,7 +135,7 @@
       var wrap = function(data, unsafe) {
         return evalStr(wrapper, {
           data: data,
-          safe: !unsafe,
+          safe: +!unsafe,
           interpolate: interpolateVar
         });
       };
@@ -164,10 +165,16 @@
             this.queryMap[query] = _var;
           }
         },
+        evalTokens: function(tokens) {
+          var str = stream.open() + makeString(tokens) + stream.close();
+
+          return str;
+        },
         query: JSONQuery,
         queryMap: {},
         varMap: {},
-        definedVars: []
+        definedVars: [],
+        stream: stream
       };
 
       var interpolateVar = compiler.getVar(sharp.HELPERS_VAR + '.interpolate'),
@@ -248,6 +255,8 @@
 
           patternMatch = pattern.exec(str);
 
+          // console.log(identifier + ':', pattern, patternMatch);
+
           if (patternMatch && patternMatch.index === index) {
             patternMatchStr = patternMatch[0];
             patternMatch[0] = compiler;
@@ -260,7 +269,7 @@
               str: patternMatchStr
             });
 
-            console.log(identifier + ':', patternMatchStr, pattern);
+            // console.log(identifier + ':', patternMatchStr, pattern);
             index += patternMatchStr.length;
           }
         }
@@ -268,9 +277,17 @@
         return tokens;
       },
       makeString = function(tokens) {
-        var str = '';
+        var str = '',
+          outflows = [];
 
         tokens.forEach(function(token) {
+          if (outflows.length && !token.data.outflow) {
+            var flow = outflows[outflows.length -1];
+
+            flow.tokens.push(token);
+            return;
+          }
+
           switch (token.type) {
             case 'string': {
               str += token.data;
@@ -283,21 +300,38 @@
 
               tmp = operator.open.apply(operator, token.args);
 
-              if (!operator.noWrap) {
-                if (operator.interpolation) {
-                  tmp = wrap(tmp, operator.hasUnsafe && token.unsafe);
-                } else {
-                  tmp = stream.wrap(tmp);
+              if (operator.outflow) {
+                outflows.push({
+                  data: tmp,
+                  tokens: []
+                });
+              } else {
+                if (!operator.noWrap) {
+                  if (operator.interpolation) {
+                    tmp = wrap(tmp, operator.hasUnsafe && token.unsafe);
+                  } else {
+                    tmp = stream.wrap(tmp);
+                  }
                 }
+
+                str += tmp;
               }
 
-              str += tmp;
             }; break;
             case 'close': {
               var operator = token.data,
-                tmp = operator.close();
+                tmp,
+                flow;
 
               compilerOperator = operator;
+
+              if (operator.outflow && outflows.length) {
+                flow = outflows.pop();
+              } else {
+                flow = null;
+              }
+
+              tmp = operator.close(compiler, flow);
 
               if (!operator.noWrap) {
                 tmp = stream.wrap(tmp);
@@ -346,9 +380,10 @@
       operators[identifier] = constructor;
     };
 
-    var defineOperators = {
+    var partials = {},
+    defineOperators = {
       '': {
-        pattern: /@EXPR_OPEN(@EXPR?)@EXPR_CLOSE/,
+        pattern: /@EXPR_OPEN(@QUERY?)@EXPR_CLOSE/,
         open: function(compiler, code) {
           return compiler.query(code);
         },
@@ -356,7 +391,7 @@
         hasUnsafe: true
       },
       'each': {
-        pattern: /@EXPR_OPEN\s*(@EXPR?)@DELIMITER([\w_]+?)\s*,\s*?([\w_]+?)@EXPR_CLOSE/,
+        pattern: /@EXPR_OPEN\s*(@QUERY?)@DELIMITER([\w_]+?)\s*,\s*?([\w_]+?)@EXPR_CLOSE/,
         open: function(compiler, iterate, key, value) {
           var uVar = compiler.getVar(),
             iterVar = compiler.getVar(),
@@ -386,7 +421,7 @@
         }
       },
       'for': {
-        pattern: /@EXPR_OPEN\s*(@EXPR?)\s+->\s+([\w_]+?)\s*(?:,\s*?([\w_]+?))?@EXPR_CLOSE/,
+        pattern: /@EXPR_OPEN\s*(@QUERY?)\s+->\s+([\w_]+?)\s*(?:,\s*?([\w_]+?))?@EXPR_CLOSE/,
         open: function(compiler, iterate, value, index) {
           var uVar = compiler.getVar(),
             iterVar = compiler.getVar(),
@@ -417,7 +452,7 @@
         }
       },
       'if': {
-        pattern: /@EXPR_OPEN(@EXPR?)@EXPR_CLOSE/,
+        pattern: /@EXPR_OPEN(@QUERY?)@EXPR_CLOSE/,
         open: function(compiler, expr) {
           return 'if (' + compiler.query(expr) + ') {';
         },
@@ -435,7 +470,7 @@
         }
       },
       'elseif': {
-        pattern: /@EXPR_OPEN(@EXPR?)@EXPR_CLOSE/,
+        pattern: /@EXPR_OPEN(@QUERY?)@EXPR_CLOSE/,
         open: function(compiler, expr) {
           return "else if (" + compiler.query(expr) + ") {";
         },
@@ -444,7 +479,7 @@
         }
       },
       'json': {
-        pattern: /@EXPR_OPEN(@EXPR?)@EXPR_CLOSE/,
+        pattern: /@EXPR_OPEN(@QUERY?)@EXPR_CLOSE/,
         open: function(compiler, expr) {
           var stringifyVar = compiler.getVar('JSON.stringify');
 
@@ -454,22 +489,37 @@
         hasUnsafe: true
       },
       'def': {
-        pattern: /@EXPR_OPEN(@EXPR?)@EXPR_CLOSE/,
+        pattern: /@EXPR_OPEN(@QUERY?)@EXPR_CLOSE/,
         open: function(compiler, name) {
           name = compiler.query(name);
+          name = new Function('return ' + name)();
 
-          return sharp.PARTIALs_VAR + '[' + name + '] = function() {';
+          return {
+            name: name
+          };
         },
-        close: function() {
-          return '};';
-        }
+        close: function(compiler, context) {
+          var name = context.data.name;
+
+          partials[name] = context;
+          return '';
+        },
+        outflow: true
       },
       'use': {
-        pattern: /@EXPR_OPEN(@EXPR?)@EXPR_CLOSE/,
+        pattern: /@EXPR_OPEN(@QUERY?)@EXPR_CLOSE/,
         open: function(compiler, name) {
           name = compiler.query(name);
+          name = new Function('return ' + name)();
 
-          return sharp.PARTIALs_VAR + '[' + name + ']();';
+          name = partials[name];
+
+          if (name) {
+            name = compiler.evalTokens(name.tokens);
+            return name;
+          }
+
+          return '';
         }
       }
     };

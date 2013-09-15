@@ -7,15 +7,29 @@
 
   <div>#(a)</div>
 
-  #(Date());
+  <pre>
+    #(Date());
+    #(Date.now());
+  </pre>
 
-  #each (test -> key, value) {
-    <p>#(key);: #(value);</p>
+  #def ("loop") {
+    <p style="color: blue;">#(key): #(value);</p>
   }#
 
   #def ("test") {
-    #(123);
+    #(123)
     #(a);
+
+    #def ('deep') {
+      <i>deep</i>
+    }#
+
+    #use('deep')
+  }#
+
+  #each (test -> key, value) {
+    #use("loop")
+    #use("test")
   }#
 
   #use("test");
