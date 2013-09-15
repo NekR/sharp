@@ -271,6 +271,8 @@
 
             // console.log(identifier + ':', patternMatchStr, pattern);
             index += patternMatchStr.length;
+          } else if (!close) {
+            index -= matchStr.length;
           }
         }
 
