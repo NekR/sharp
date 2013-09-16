@@ -35,6 +35,10 @@
           var res = ((res = data) == null ? '' : res + '');
 
           return safe ? res : encodeHTML(res);
+        },
+        test: function() {
+          console.log(args);
+          return 'test used';
         }
       }
     };
@@ -47,8 +51,11 @@
       OUTPUT_SIGN = 'out',
       VAR_SIGN = 'v',
       TMP_VAR = 'tmp',
-      R_STATEMENT = /(@BLOCK_CLOSE)?(@MAIN)(@IDENTIFIER)?/g,
-      R_EXPR_END = /(?:(?!(?:[\s\S](?!(?:@STATEMENT)))*?@EXPR_CLOSE));?/;
+      EOL_SIGN = '__EOL__',
+      R_STATEMENT = /(@BLOCK_CLOSE)?(@MAIN)(@MAIN|@MULTILINE_COMMENT)?(@IDENTIFIER)?/g,
+      R_EXPR_END = /(?:(?!(?:[\s\S](?!(?:@STATEMENT)))*?@EXPR_CLOSE));?/,
+      R_EOL = /\r?\n/g,
+      R_EOL_OR_EOF = new RegExp('(?:' + EOL_SIGN + ')|$', 'g');
 
     var consts = {
       MAIN: /#/,
@@ -58,6 +65,7 @@
       BLOCK_CLOSE: /\s*\}\s*/,
       EXPR_OPEN: /\(/,
       EXPR_CLOSE: /\)/,
+      MULTILINE_COMMENT: /\*/,
       DELIMITER: /\s+->\s+/,
       STRING: /\\"[^"]*?\\"/,
       OUTPUT: new RegExp(OUTPUT_SIGN)
@@ -127,10 +135,11 @@
     sharp.compiler.compile = function(str) {
       var settings = sharp.compiler.settings,
         wrapper = settings.append ? wrappers.append : wrappers.split,
-        uid = 0;
+        uid = 0,
+        mainStr = getRegStr(consts.MAIN);
 
-      str = (settings.strip ? str.replace(/(^|\r|\n)\t* +| +\t*(\r|\n|$)/g, ' ')
-            .replace(/\r|\n|\t|\/\*[\s\S]*?\*\//g, '') : str).replace(/'|"|\\/g, '\\$&');
+      str = (settings.strip ? str.replace(/(^|\r?\n)\t* +| +\t*(\r?\n|$)/g, EOL_SIGN)
+            .replace(/\r|\n|\t/g, '') : str).replace(/'|"|\\/g, '\\$&');
 
       var wrap = function(data, unsafe) {
         return evalStr(wrapper, {
@@ -187,6 +196,7 @@
           match,
           matchStr,
           close,
+          comment,
           identifier,
           openStack = [],
           tmp,
@@ -196,7 +206,14 @@
           patternMatch,
           patternMatchStr,
           main,
-          unsafe;
+          unsafe,
+          commentMatch;
+
+        var updateIndex = function() {
+          if (index > statementReg.lastIndex) {
+            statementReg.lastIndex = index;
+          }
+        };
 
         statementReg.lastIndex = 0;
 
@@ -204,13 +221,41 @@
           matchStr = match[0];
           close = match[1];
           main = match[2];
-          identifier = match[3] || '';
+          comment = match[3] || '';
+          identifier = match[4] || '';
           tmp = null;
+
+          // console.log(index, str.slice(index, match.index));
 
           tokens.push({
             type: 'string',
             data: str.slice(index, index = match.index)
           });
+
+          if (comment) {
+            if (comment === mainStr) {
+              R_EOL_OR_EOF.lastIndex = index;
+              commentMatch = R_EOL_OR_EOF.exec(str);
+            } else {
+              commentMatch = evalReg(/@MULTILINE_COMMENT@MAIN/);
+              commentMatch.lastIndex = index;
+              commentMatch = commentMatch.exec(str);
+            }
+
+            if (commentMatch) {
+              tokens.push({
+                type: 'comment',
+                data: str.slice(index + main.length + comment.length, commentMatch.index)
+              });
+
+              index = commentMatch.index + (commentMatch[0] || '').length;
+            } else {
+              index += matchStr.length;
+            }
+
+            updateIndex();
+            continue;
+          }
 
           if (identifier[0] === '!') {
             unsafe = true;
@@ -237,6 +282,7 @@
           }
 
           if (!hasIdentifier) {
+            updateIndex();
             continue;
           }
 
@@ -274,7 +320,14 @@
           } else if (!close) {
             index -= matchStr.length;
           }
+
+          updateIndex();
         }
+
+        tokens.push({
+          type: 'string',
+          data: str.slice(index)
+        });
 
         return tokens;
       },
@@ -318,7 +371,6 @@
 
                 str += tmp;
               }
-
             }; break;
             case 'close': {
               var operator = token.data,
@@ -349,6 +401,9 @@
 
               str += tmp;
             }; break;
+            case 'comment': {
+              // console.log('comment:', token.data);
+            }; break;
           }
 
           compilerOperator = null;
@@ -366,7 +421,8 @@
       }, compiler.varMap) + ';' + "var " + OUTPUT_SIGN + "= '" +
         str + "'; return " + OUTPUT_SIGN + ";";
 
-      str = str.replace(/\n/g, '\\n').replace(/\t/g, '\\t').replace(/\r/g, '\\r')
+      str = str.replace(new RegExp(EOL_SIGN, 'g'), ' ')
+        .replace(/\n/g, '\\n').replace(/\t/g, '\\t').replace(/\r/g, '\\r')
         .replace(evalReg(/(\s|;|\}|^|\{)@OUTPUT\+='';/), '$1').replace(/\+''/g, '')
         .replace(evalReg(/(\s|;|\}|^|\{)@OUTPUT\+=''\+/),'$1' + OUTPUT_SIGN + '+=');
 
@@ -387,7 +443,17 @@
       '': {
         pattern: /@EXPR_OPEN(@QUERY?)@EXPR_CLOSE/,
         open: function(compiler, code) {
-          return compiler.query(code);
+          return '(' + compiler.query(code) + ')';
+        },
+        interpolation: true,
+        hasUnsafe: true
+      },
+      '$': {
+        pattern: /([a-zA-Z_]+?)@EXPR_OPEN(@QUERY?)@EXPR_CLOSE/,
+        open: function(compiler, helpder, args) {
+          args = compiler.query(args);
+
+          return sharp.HELPERS_VAR + '.' + helpder + '(' + args + ')';
         },
         interpolation: true,
         hasUnsafe: true
