@@ -6,6 +6,7 @@
   sharp.VAR_NAME = '$';
   sharp.HELPERS_VAR = 'h';
   sharp.PARTIALS_VAR = 'p';
+  sharp.RUNTIME_VAR = 'r';
 
   (function sharpRuntime(){
     var entitesMap = {
@@ -27,20 +28,19 @@
 
     sharp.runtime = {
       render: function(tpl, data, partials) {
-        tpl = new Function(sharp.HELPERS_VAR, sharp.VAR_NAME, sharp.PARTIALS_VAR, tpl);
-        return tpl(sharp.runtime.helpers, data, partials || {});
+        tpl = new Function(sharp.RUNTIME_VAR, sharp.HELPERS_VAR, sharp.VAR_NAME, sharp.PARTIALS_VAR, tpl);
+        return tpl(sharp.runtime, sharp.runtime.helpers, data, partials || {});
       },
       helpers: {
-        interpolate: function(data, safe) {
-          var res = ((res = data) == null ? '' : res + '');
-
-          return safe ? res : encodeHTML(res);
-        },
         test: function() {
-          console.log(args);
           return 'test used';
         }
-      }
+      },
+      interpolate: function(data, safe) {
+        var res = ((res = data) == null ? '' : res + '');
+
+        return safe ? res : encodeHTML(res);
+      },
     };
   }());
 
@@ -186,7 +186,7 @@
         stream: stream
       };
 
-      var interpolateVar = compiler.getVar(sharp.HELPERS_VAR + '.interpolate'),
+      var interpolateVar = compiler.getVar(sharp.RUNTIME_VAR + '.interpolate'),
         compilerOperator;
 
       var makeTokens = function() {
@@ -615,7 +615,7 @@
 
       query = query.replace(/([^<>=]=)([^=])/g, '$1=$2'); // change the equals to comparisons except operators ==, <=, >=
 
-      query = query.replace(/(@|\.)?\s*([a-zA-Z_]+)(\s*:)?/g, function(str, sign, identifier, colon) {
+      query = query.replace(/(@|(?:\.\s*?)|\$)?([a-zA-Z_]+)(\s*:)?/g, function(str, sign, identifier, colon) {
         if (colon) {
           return (sign || '') + identifier + colon;
         }
@@ -632,6 +632,10 @@
           }
 
           return sharp.VAR_NAME + '.' + identifier;
+        }
+
+        if (sign === '$') {
+          return sharp.HELPERS_VAR + '.' + identifier;
         }
 
         return (sign || '') + identifier;
