@@ -52,7 +52,7 @@
       VAR_SIGN = 'v',
       TMP_VAR = 'tmp',
       EOL_SIGN = '__EOL__',
-      R_STATEMENT = /(@BLOCK_CLOSE)?(@MAIN)(@MAIN|@MULTILINE_COMMENT)?(@IDENTIFIER)?/g,
+      R_STATEMENT = /(@BLOCK_CLOSE)?(@MAIN)(@MAIN|@MULTILINE_COMMENT)?(@IDENTIFIER)?(@MODIFICATORS)?/g,
       R_EXPR_END = /(?:(?!(?:[\s\S](?!(?:@STATEMENT)))*?@EXPR_CLOSE));?/,
       R_EOL = /\r?\n/g,
       R_EOL_OR_EOF = new RegExp('(?:' + EOL_SIGN + ')|$', 'g');
@@ -60,7 +60,8 @@
     var consts = {
       MAIN: /#/,
       QUERY: /[\s\S]+/,
-      IDENTIFIER: /[A-Za-z_!:][A-Za-z_!:\d]*/,
+      IDENTIFIER: /[A-Za-z_!][A-Za-z_!\d]*/,
+      MODIFICATORS: /(?::[A-Za-z_]+)*/,
       BLOCK_OPEN: /\s*\{\s*/,
       BLOCK_CLOSE: /\s*\}\s*/,
       EXPR_OPEN: /\(/,
@@ -136,7 +137,8 @@
       var settings = sharp.compiler.settings,
         wrapper = settings.append ? wrappers.append : wrappers.split,
         uid = 0,
-        mainStr = getRegStr(consts.MAIN);
+        mainStr = getRegStr(consts.MAIN),
+        currentToken;
 
       str = (settings.strip ? str.replace(/(^|\r?\n)\t* +| +\t*(\r?\n|$)/g, EOL_SIGN)
             .replace(/\r|\n|\t/g, '') : str).replace(/'|"|\\/g, '\\$&');
@@ -179,6 +181,9 @@
 
           return str;
         },
+        getModificators: function() {
+          return currentToken && currentToken.modificators || [];
+        },
         query: JSONQuery,
         queryMap: {},
         varMap: {},
@@ -198,6 +203,7 @@
           close,
           comment,
           identifier,
+          modificators,
           openStack = [],
           tmp,
           index = 0,
@@ -223,6 +229,7 @@
           main = match[2];
           comment = match[3] || '';
           identifier = match[4] || '';
+          modificators = match[5] || '';
           tmp = null;
 
           // console.log(index, str.slice(index, match.index));
@@ -307,12 +314,16 @@
             patternMatchStr = patternMatch[0];
             patternMatch[0] = compiler;
 
+            if (modificators) {
+              modificators = modificators.slice(1).split(':');
+            }
+
             tokens.push({
               type: 'open',
               data: operator,
               args: patternMatch,
               unsafe: unsafe,
-              str: patternMatchStr
+              modificators: modificators
             });
 
             // console.log(identifier + ':', patternMatchStr, pattern);
@@ -342,6 +353,8 @@
             flow.tokens.push(token);
             return;
           }
+
+          currentToken = token;
 
           switch (token.type) {
             case 'string': {
@@ -409,6 +422,8 @@
           compilerOperator = null;
         });
 
+        currentToken = null;
+
         return str;
       };
 
@@ -443,17 +458,15 @@
       '': {
         pattern: /@EXPR_OPEN(@QUERY?)@EXPR_CLOSE/,
         open: function(compiler, code) {
-          return '(' + compiler.query(code) + ')';
-        },
-        interpolation: true,
-        hasUnsafe: true
-      },
-      '$': {
-        pattern: /([a-zA-Z_]+?)@EXPR_OPEN(@QUERY?)@EXPR_CLOSE/,
-        open: function(compiler, helpder, args) {
-          args = compiler.query(args);
+          var mod = compiler.getModificators()[0];
 
-          return sharp.HELPERS_VAR + '.' + helpder + '(' + args + ')';
+          code = compiler.query(code);
+
+          if (mod) {
+            return sharp.HELPERS_VAR + '.' + mod + '(' + code + ')';
+          }
+
+          return '(' + code + ')';
         },
         interpolation: true,
         hasUnsafe: true
@@ -615,9 +628,13 @@
 
       query = query.replace(/([^<>=]=)([^=])/g, '$1=$2'); // change the equals to comparisons except operators ==, <=, >=
 
-      query = query.replace(/(@|(?:\.\s*?)|\$)?([a-zA-Z_]+)(\s*:)?/g, function(str, sign, identifier, colon) {
+      query = query.replace(/(@|(?:\.\s*?)|(?:\:))?([a-zA-Z_]+)(\s*:)?/g, function(str, sign, identifier, colon) {
         if (colon) {
           return (sign || '') + identifier + colon;
+        }
+
+        if (sign === ':') {
+          return sharp.HELPERS_VAR + '.' + identifier;
         }
 
         if (sign !== '.' && sign !== '@') {
@@ -632,10 +649,6 @@
           }
 
           return sharp.VAR_NAME + '.' + identifier;
-        }
-
-        if (sign === '$') {
-          return sharp.HELPERS_VAR + '.' + identifier;
         }
 
         return (sign || '') + identifier;
