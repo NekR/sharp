@@ -16,7 +16,8 @@
       '"': '&#34;',
       "'": '&#39;',
       '/': '&#47;'
-    };
+    },
+    helpers = {};
 
     var R_MATCH_ENTITES = /&(?!#?\w+;)|<|>|"|'|\//g;
 
@@ -29,18 +30,26 @@
     sharp.runtime = {
       render: function(tpl, data, partials) {
         tpl = new Function(sharp.RUNTIME_VAR, sharp.HELPERS_VAR, sharp.VAR_NAME, sharp.PARTIALS_VAR, tpl);
-        return tpl(sharp.runtime, sharp.runtime.helpers, data, partials || {});
+
+        return tpl(sharp.runtime, helpers, data, partials || {});
       },
-      helpers: {
-        test: function() {
-          return 'test used';
-        }
+      wrap: function(tpl) {
+        tpl = new Function(sharp.RUNTIME_VAR, sharp.HELPERS_VAR, sharp.VAR_NAME, sharp.PARTIALS_VAR, tpl);
+
+        return function(data, partials) {
+          return tpl(sharp.runtime, helpers, data, partials || {});
+        };
       },
       interpolate: function(data, safe) {
         var res = ((res = data) == null ? '' : res + '');
 
         return safe ? res : encodeHTML(res);
       },
+      addHelper: function(name, fn) {
+        if (!helpers[name]) {
+          helpers[name] = fn;
+        }
+      }
     };
   }());
 
@@ -59,7 +68,7 @@
 
     var consts = {
       MAIN: /#/,
-      QUERY: /[\s\S]+/,
+      QUERY: /[\s\S]*/,
       IDENTIFIER: /[A-Za-z_!][A-Za-z_!\d]*/,
       MODIFICATORS: /(?::[A-Za-z_]+)*/,
       BLOCK_OPEN: /\s*\{\s*/,
@@ -460,13 +469,13 @@
         open: function(compiler, code) {
           var mod = compiler.getModificators()[0];
 
-          code = compiler.query(code);
+          code = compiler.query(code.trim());
 
           if (mod) {
             return sharp.HELPERS_VAR + '.' + mod + '(' + code + ')';
           }
 
-          return '(' + code + ')';
+          return code ? '(' + code + ')' : '""';
         },
         interpolation: true,
         hasUnsafe: true
