@@ -51,11 +51,15 @@
         }
       },
       each: function(obj, fn) {
+        if (!obj) return;
+
         Object.keys(obj).forEach(function(key) {
           fn(key, obj[key]);
         });
       },
       iter: function(arr, fn) {
+        if (!Array.isArray(arr)) return;
+
         arr.forEach(fn);
       }
     };
@@ -492,7 +496,6 @@
         pattern: /@EXPR_OPEN\s*(@QUERY?)@DELIMITER([\w_]+?)\s*,\s*?([\w_]+?)@EXPR_CLOSE/,
         open: function(compiler, iterate, key, value) {
           var keyVar = compiler.getVar(),
-            iterVar = compiler.getVar(),
             valVar = compiler.getVar(),
             eachVar = compiler.getVar(sharp.RUNTIME_VAR + '.each');
 
@@ -501,27 +504,23 @@
           compiler.mapQuery(value, valVar)
           compiler.mapQuery(key, keyVar);
 
-          var str = 'var %iterVar% = %iterate%;' +
-                'if (%iterVar%) {' +
-                  '%eachVar%(%iterVar%, function(%keyVar%, %valVar%) {';
+          var str = '%eachVar%(%iterate%, function(%keyVar%, %valVar%) {';
 
           return evalStr(str, {
             keyVar: keyVar,
             valVar: valVar,
-            iterVar: iterVar,
             eachVar: eachVar,
             iterate: iterate
           });
         },
         close: function() {
-          return '});}';
+          return '});';
         }
       },
       'for': {
         pattern: /@EXPR_OPEN\s*(@QUERY?)\s+->\s+([\w_]+?)\s*(?:,\s*?([\w_]+?))?@EXPR_CLOSE/,
         open: function(compiler, iterate, value, index) {
           var indexVar = compiler.getVar(),
-            iterVar = compiler.getVar(),
             forVar = compiler.getVar(sharp.RUNTIME_VAR + '.iter'),
             valVar = compiler.getVar();
 
@@ -531,20 +530,17 @@
           compiler.mapQuery(index, indexVar);
 
 
-          var str = 'var %iterVar% = %iterate%;' +
-                'if (%iterVar%) {' +
-                  '%forVar%(%iterVar%, function(%valVar%, %indexVar%) {';
+          var str = '%forVar%(%iterate%, function(%valVar%, %indexVar%) {';
 
           return evalStr(str, {
             indexVar: indexVar,
-            iterVar: iterVar,
             forVar: forVar,
             valVar: valVar,
             iterate: iterate
           });
         },
         close: function() {
-          return '});}';
+          return '});';
         }
       },
       'if': {
