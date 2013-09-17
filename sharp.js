@@ -49,6 +49,14 @@
         if (!helpers[name]) {
           helpers[name] = fn;
         }
+      },
+      each: function(obj, fn) {
+        Object.keys(obj).forEach(function(key) {
+          fn(key, obj[key]);
+        });
+      },
+      iter: function(arr, fn) {
+        arr.forEach(fn);
       }
     };
   }());
@@ -483,26 +491,25 @@
       'each': {
         pattern: /@EXPR_OPEN\s*(@QUERY?)@DELIMITER([\w_]+?)\s*,\s*?([\w_]+?)@EXPR_CLOSE/,
         open: function(compiler, iterate, key, value) {
-          var uVar = compiler.getVar(),
+          var keyVar = compiler.getVar(),
             iterVar = compiler.getVar(),
             valVar = compiler.getVar(),
-            keysVar = compiler.getVar('Object.keys');
+            eachVar = compiler.getVar(sharp.RUNTIME_VAR + '.each');
 
           iterate = compiler.query(iterate);
 
           compiler.mapQuery(value, valVar)
-          compiler.mapQuery(key, uVar);
+          compiler.mapQuery(key, keyVar);
 
           var str = 'var %iterVar% = %iterate%;' +
                 'if (%iterVar%) {' +
-                  '%keysVar%(%iterVar%).forEach(function(%uVar%) {' +
-                    '%valVar% = %iterVar%[%uVar%];';
+                  '%eachVar%(%iterVar%, function(%keyVar%, %valVar%) {';
 
           return evalStr(str, {
-            uVar: uVar,
+            keyVar: keyVar,
             valVar: valVar,
             iterVar: iterVar,
-            keysVar: keysVar,
+            eachVar: eachVar,
             iterate: iterate
           });
         },
@@ -513,32 +520,31 @@
       'for': {
         pattern: /@EXPR_OPEN\s*(@QUERY?)\s+->\s+([\w_]+?)\s*(?:,\s*?([\w_]+?))?@EXPR_CLOSE/,
         open: function(compiler, iterate, value, index) {
-          var uVar = compiler.getVar(),
+          var indexVar = compiler.getVar(),
             iterVar = compiler.getVar(),
-            lenVar = compiler.getVar(),
+            forVar = compiler.getVar(sharp.RUNTIME_VAR + '.iter'),
             valVar = compiler.getVar();
 
           iterate = compiler.query(iterate);
 
           compiler.mapQuery(value, valVar)
-          compiler.mapQuery(index, uVar);
+          compiler.mapQuery(index, indexVar);
 
 
           var str = 'var %iterVar% = %iterate%;' +
                 'if (%iterVar%) {' +
-                  'for (var %uVar% = 0, %lenVar% = %iterVar%.length; %uVar% < %lenVar%; %uVar%++) {' +
-                    '%valVar% = %iterVar%[%uVar%];';
+                  '%forVar%(%iterVar%, function(%valVar%, %indexVar%) {';
 
           return evalStr(str, {
-            uVar: uVar,
+            indexVar: indexVar,
             iterVar: iterVar,
-            lenVar: lenVar,
+            forVar: forVar,
             valVar: valVar,
             iterate: iterate
           });
         },
         close: function() {
-          return '}}';
+          return '});}';
         }
       },
       'if': {

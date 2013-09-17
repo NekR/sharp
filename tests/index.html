@@ -54,9 +54,13 @@ abs
     multiline comment
 *#dd
 
-  <span class="data">#json({a: :test(13) + 'aaa'})</span>
+  ## <span class="data">#json({a: :test(13) + 'aaa'})</span>
 
   #();
+
+  #for (foo -> val, i) {
+    <div style="color: red;">index: #(i);<br>val / 10: #(val / 10);</div>
+  }#
 </script>
 
 <div id="out"></div>
@@ -73,7 +77,8 @@ abs
       b: 3,
       c: 10
     },
-    a: 'ggg'
+    a: 'ggg',
+    foo: [10, 20, 30]
   });
 
   document.getElementById('out').innerHTML = tpl;
